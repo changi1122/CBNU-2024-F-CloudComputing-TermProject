@@ -6,12 +6,16 @@
 
 package aws;
 
+import java.util.Iterator;
 import java.util.Scanner;
 
 import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
 import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.regions.Regions;
 import com.amazonaws.services.ec2.AmazonEC2;
 import com.amazonaws.services.ec2.AmazonEC2ClientBuilder;
+import com.amazonaws.services.ec2.model.*;
 
 public class Main {
 
@@ -31,7 +35,7 @@ public class Main {
         }
         ec2 = AmazonEC2ClientBuilder.standard()
                 .withCredentials(credentialsProvider)
-                .withRegion("us-east-1")
+                .withRegion(Regions.US_EAST_1)
                 .build();
     }
 
@@ -70,21 +74,33 @@ public class Main {
 
             switch (number) {
                 case 1:
+                    listInstances();
                     break;
+
                 case 2:
+                    listAvailableZones();
                     break;
+
                 case 3:
                     break;
+
                 case 4:
+                    listAvailableRegions();
                     break;
+
                 case 5:
                     break;
+
                 case 6:
                     break;
+
                 case 7:
                     break;
+
                 case 8:
+                    listImages();
                     break;
+
                 case 99:
                     System.out.println("bye!");
                     menu.close();
@@ -93,6 +109,101 @@ public class Main {
                 default:
                     System.out.println("No such menu!");
             }
+        }
+    }
+
+    public static void listInstances() {
+        System.out.println("Listing instances...");
+        boolean done = false;
+
+        DescribeInstancesRequest request = new DescribeInstancesRequest();
+
+        while (!done) {
+            DescribeInstancesResult response = ec2.describeInstances(request);
+
+            for (Reservation reservation : response.getReservations()) {
+                for (Instance instance : reservation.getInstances()) {
+                    System.out.printf(
+                            "[id] %s, " +
+                            "[AMI] %s, " +
+                            "[type] %s, " +
+                            "[state] %10s, " +
+                            "[monitoring state] %s",
+                            instance.getInstanceId(),
+                            instance.getImageId(),
+                            instance.getInstanceType(),
+                            instance.getState().getName(),
+                            instance.getMonitoring().getState());
+                }
+                System.out.println();
+            }
+
+            request.setNextToken(response.getNextToken());
+
+            if (response.getNextToken() == null) {
+                done = true;
+            }
+        }
+    }
+
+    public static void listAvailableZones() {
+        System.out.println("Listing available zones...");
+
+        try {
+            DescribeAvailabilityZonesResult result = ec2.describeAvailabilityZones();
+            Iterator<AvailabilityZone> iterator = result.getAvailabilityZones().iterator();
+
+            AvailabilityZone zone;
+            while (iterator.hasNext()) {
+                zone = iterator.next();
+                System.out.printf(
+                    "[id] %s,  [region] %15s, [zone] %15s\n",
+                    zone.getZoneId(),
+                    zone.getRegionName(),
+                    zone.getZoneName()
+                );
+            }
+            System.out.println("\nYou have access to " + result.getAvailabilityZones().size() +
+                    " Availability Zones.");
+
+        } catch (AmazonServiceException ase) {
+            System.out.println("Caught Exception: " + ase.getMessage());
+            System.out.println("Reponse Status Code: " + ase.getStatusCode());
+            System.out.println("Error Code: " + ase.getErrorCode());
+            System.out.println("Request ID: " + ase.getRequestId());
+        }
+    }
+
+    public static void listAvailableRegions() {
+        System.out.println("Listing available regions...");
+
+        final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
+
+        DescribeRegionsResult result = ec2Temp.describeRegions();
+        for (Region region : result.getRegions()) {
+            System.out.printf(
+                "[region] %15s, " +
+                "[endpoint] %s\n",
+                region.getRegionName(),
+                region.getEndpoint());
+        }
+    }
+
+    public static void listImages() {
+        System.out.println("Listing images...");
+
+        final AmazonEC2 ec2 = AmazonEC2ClientBuilder.defaultClient();
+
+        DescribeImagesRequest request = new DescribeImagesRequest().withOwners("self");
+        ProfileCredentialsProvider credentialsProvider = new ProfileCredentialsProvider();
+
+        request.setRequestCredentialsProvider(credentialsProvider);
+
+        DescribeImagesResult results = ec2.describeImages(request);
+
+        for (Image images : results.getImages()){
+            System.out.printf("[ImageID] %s, [Name] %s, [Owner] %s\n",
+                    images.getImageId(), images.getName(), images.getOwnerId());
         }
     }
 }
