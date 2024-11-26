@@ -16,6 +16,7 @@ import com.amazonaws.regions.Regions;
 import com.amazonaws.services.ec2.AmazonEC2;
 import com.amazonaws.services.ec2.AmazonEC2ClientBuilder;
 import com.amazonaws.services.ec2.model.*;
+import com.amazonaws.services.opsworks.model.StartInstanceRequest;
 
 public class Main {
 
@@ -45,7 +46,7 @@ public class Main {
         init();
 
         Scanner menu = new Scanner(System.in);
-        Scanner id_string = new Scanner(System.in);
+        Scanner idString = new Scanner(System.in);
         int number = 0;
 
         while (true) {
@@ -70,7 +71,7 @@ public class Main {
                 break;
             }
 
-            String instance_id = "";
+            String instanceId = "";
 
             switch (number) {
                 case 1:
@@ -82,6 +83,12 @@ public class Main {
                     break;
 
                 case 3:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty())
+                        startInstance(instanceId.trim());
                     break;
 
                 case 4:
@@ -89,12 +96,31 @@ public class Main {
                     break;
 
                 case 5:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty())
+                        stopInstance(instanceId.trim());
                     break;
 
                 case 6:
+                    System.out.print("Enter ami id: ");
+                    String amiId = "";
+                    if (idString.hasNext())
+                        amiId = idString.nextLine();
+
+                    if (!amiId.trim().isEmpty())
+                        createInstance(amiId.trim());
                     break;
 
                 case 7:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty())
+                        rebootInstance(instanceId.trim());
                     break;
 
                 case 8:
@@ -104,7 +130,7 @@ public class Main {
                 case 99:
                     System.out.println("bye!");
                     menu.close();
-                    id_string.close();
+                    idString.close();
                     return;
                 default:
                     System.out.println("No such menu!");
@@ -174,6 +200,25 @@ public class Main {
         }
     }
 
+    public static void startInstance(String instanceId) {
+        System.out.printf("Starting instance %s...%n", instanceId);
+
+        final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
+
+        // 유효성 검사
+        DryRunSupportedRequest<StartInstancesRequest> dryRequest =
+            () -> {
+                StartInstancesRequest request = new StartInstancesRequest().withInstanceIds(instanceId);
+                return request.getDryRunRequest();
+            };
+
+        StartInstancesRequest request = new StartInstancesRequest()
+                .withInstanceIds(instanceId);
+        ec2Temp.startInstances(request);
+
+        System.out.printf("Successfully started instance %s", instanceId);
+    }
+
     public static void listAvailableRegions() {
         System.out.println("Listing available regions...");
 
@@ -186,6 +231,61 @@ public class Main {
                 "[endpoint] %s\n",
                 region.getRegionName(),
                 region.getEndpoint());
+        }
+    }
+
+    public static void stopInstance(String instanceId) {
+        final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
+
+        // 유효성 검사
+        DryRunSupportedRequest<StopInstancesRequest> dryRequest =
+                () -> {
+                    StopInstancesRequest request = new StopInstancesRequest().withInstanceIds(instanceId);
+                    return request.getDryRunRequest();
+                };
+
+        try {
+            StopInstancesRequest request = new StopInstancesRequest().withInstanceIds(instanceId);
+            ec2Temp.stopInstances(request);
+            System.out.printf("Successfully stop instance %s\n", instanceId);
+        } catch (Exception e) {
+            System.out.println("Exception: " + e.toString());
+        }
+    }
+    
+    public static void createInstance(String amiId) {
+        final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
+
+        RunInstancesRequest runRequest = new RunInstancesRequest()
+                .withImageId(amiId)
+                .withInstanceType(InstanceType.T2Micro)
+                .withMaxCount(1)
+                .withMinCount(1);
+
+        RunInstancesResult runResult = ec2Temp.runInstances(runRequest);
+
+        String reservationId = runResult.getReservation().getInstances().get(0).getInstanceId();
+
+        System.out.printf(
+                "Successfully started EC2 instance %s based on AMI %s",
+                reservationId, amiId
+        );
+    }
+
+    public static void rebootInstance(String instanceId) {
+        System.out.println("Rebooting instance...");
+
+        final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
+
+        try {
+            RebootInstancesRequest request = new RebootInstancesRequest()
+                    .withInstanceIds(instanceId);
+
+            RebootInstancesResult result = ec2Temp.rebootInstances(request);
+
+            System.out.printf("Successfully rebooted instance %s", instanceId);
+        } catch (Exception e) {
+            System.out.println("Exception: " + e.toString());
         }
     }
 
