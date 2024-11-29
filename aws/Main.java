@@ -65,6 +65,7 @@ public class Main {
             System.out.println("  5.  stop instance               6.  create instance       ");
             System.out.println("  7.  reboot instance             8.  list images           ");
             System.out.println("  9.  shell command               10. _                     ");
+            System.out.println("  11. condor_status               12. condor_q              ");
             System.out.println("                                  99. quit                  ");
             System.out.println("------------------------------------------------------------");
 
@@ -140,6 +141,24 @@ public class Main {
 
                     if (!instanceId.trim().isEmpty())
                         runShellCommand(instanceId.trim());
+                    break;
+
+                case 11:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty())
+                        showCondorStatus(instanceId.trim());
+                    break;
+
+                case 12:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty())
+                        showCondorQ(instanceId.trim());
                     break;
 
                 case 99:
@@ -354,30 +373,7 @@ public class Main {
                             List.of("cd "+workingDirectory, command))
                     );
 
-            SendCommandResult result = ssmClient.sendCommand(sendCommandRequest);
-            String commandId = result.getCommand().getCommandId();
-
-            GetCommandInvocationRequest invocationRequest = new GetCommandInvocationRequest()
-                    .withInstanceId(instanceId)
-                    .withCommandId(commandId);
-
-            GetCommandInvocationResult invocationResult = null;
-            while (true) {
-                invocationResult = ssmClient.getCommandInvocation(invocationRequest);
-                String status = invocationResult.getStatus();
-
-                if ("Success".equals(status) || "Failed".equals(status) || "Cancelled".equals(status)) {
-                    break;
-                }
-                Thread.sleep(2000);
-            }
-
-            // System.out.println("[Command Status]: " + invocationResult.getStatus());
-            System.out.println(invocationResult.getStandardOutputContent());
-
-            String serror = invocationResult.getStandardErrorContent();
-            if (!serror.isEmpty())
-                System.out.println("\n[Standard Error]:\n" + serror);
+            sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
         }
     }
 
@@ -403,5 +399,70 @@ public class Main {
     // 로컬에서 working directory 출력시 홈 디렉터리를 ~로 출력하기 위한 메서드
     private static String displayWorkingDirectory(String workingDirectory) {
         return (workingDirectory.equals("/home/ec2-user") ? "~" : workingDirectory);
+    }
+
+    // condor_status를 출력하기 위한 메서드
+    public static void showCondorStatus(String instanceId) throws InterruptedException {
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        SendCommandRequest sendCommandRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap(
+                        "commands",
+                        Collections.singletonList("condor_status"))
+                );
+
+        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
+    }
+
+    // condor_status를 출력하기 위한 메서드
+    public static void showCondorQ(String instanceId) throws InterruptedException {
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        SendCommandRequest sendCommandRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap(
+                        "commands",
+                        Collections.singletonList("condor_q"))
+                );
+
+        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
+    }
+
+    // AWS SDK를 이용해 EC2 인스턴스로 명령어를 전송하고 결과를 출력하는 메서드
+    private static void sendShellCommandToInstance(String instanceId, AWSSimpleSystemsManagement ssmClient,
+                                                   SendCommandRequest sendCommandRequest) throws InterruptedException {
+        SendCommandResult result = ssmClient.sendCommand(sendCommandRequest);
+        String commandId = result.getCommand().getCommandId();
+
+        GetCommandInvocationRequest invocationRequest = new GetCommandInvocationRequest()
+                .withInstanceId(instanceId)
+                .withCommandId(commandId);
+
+        GetCommandInvocationResult invocationResult = null;
+        while (true) {
+            invocationResult = ssmClient.getCommandInvocation(invocationRequest);
+            String status = invocationResult.getStatus();
+
+            if ("Success".equals(status) || "Failed".equals(status) || "Cancelled".equals(status)) {
+                break;
+            }
+            Thread.sleep(2000);
+        }
+
+        // System.out.println("[Command Status]: " + invocationResult.getStatus());
+        System.out.println(invocationResult.getStandardOutputContent());
+
+        String serror = invocationResult.getStandardErrorContent();
+        if (!serror.isEmpty())
+            System.out.println("\n[Standard Error]:\n" + serror);
     }
 }
