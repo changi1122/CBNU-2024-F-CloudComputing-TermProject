@@ -6,6 +6,7 @@
 
 package aws;
 
+import java.io.File;
 import java.util.*;
 
 import com.amazonaws.AmazonClientException;
@@ -25,6 +26,8 @@ import com.amazonaws.services.simplesystemsmanagement.model.SendCommandResult;
 public class Main {
 
     final static Regions region = Regions.US_EAST_1;
+    final static String jobDirectoryPath = "jobs";
+
     static AmazonEC2 ec2;
 
     private static void init() throws Exception {
@@ -64,7 +67,7 @@ public class Main {
             System.out.println("  3.  start instance              4.  available regions     ");
             System.out.println("  5.  stop instance               6.  create instance       ");
             System.out.println("  7.  reboot instance             8.  list images           ");
-            System.out.println("  9.  shell command               10. _                     ");
+            System.out.println("  9.  shell command               10. submit jobs           ");
             System.out.println("  11. condor_status               12. condor_q              ");
             System.out.println("                                  99. quit                  ");
             System.out.println("------------------------------------------------------------");
@@ -79,6 +82,7 @@ public class Main {
             }
 
             String instanceId = "";
+            String bucketName = "";
 
             switch (number) {
                 case 1:
@@ -141,6 +145,18 @@ public class Main {
 
                     if (!instanceId.trim().isEmpty())
                         runShellCommand(instanceId.trim());
+                    break;
+
+                case 10:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+                    System.out.print("Enter S3 Bucket Name: ");
+                    if (idString.hasNext())
+                        bucketName = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty() && !bucketName.trim().isEmpty())
+                        submitJobs(instanceId, bucketName);
                     break;
 
                 case 11:
@@ -464,5 +480,106 @@ public class Main {
         String serror = invocationResult.getStandardErrorContent();
         if (!serror.isEmpty())
             System.out.println("\n[Standard Error]:\n" + serror);
+    }
+
+    public static void submitJobs(String instanceId, String bucketName) throws InterruptedException {
+
+        File jobDirectory = new File(jobDirectoryPath);
+        if (!jobDirectory.exists() || !jobDirectory.isDirectory()) {
+            System.out.println("[Error]: job directory path is not valid.");
+            return;
+        }
+
+        File[] subDirectories = jobDirectory.listFiles();
+        if (subDirectories == null || subDirectories.length == 0) {
+            System.out.println("[Error]: job directory is empty.");
+            return;
+        }
+
+        // 업로드할 수 있는 디렉토리 목록 출력
+        System.out.println("\n[JOBS]:\n");
+        for (int i = 0; i < subDirectories.length; i++) {
+            // .jds 파일 찾기
+            File[] jdsFile = subDirectories[i].listFiles((dir, name) -> name.endsWith(".jds"));
+            if (jdsFile == null || jdsFile.length == 0)
+                continue;
+
+            System.out.printf("[%02d] %s\n", i+1, jdsFile[0].getName());
+        }
+
+        // 업로드할 디렉토리 번호 입력 받음
+        int jobNumber;
+        Scanner input = new Scanner(System.in);
+        System.out.print("\nEnter number to submit: ");
+
+        try {
+            jobNumber = input.nextInt();
+        } catch (InputMismatchException e) {
+            System.out.println("[Error]: input is not NUMBER!");
+            return;
+        }
+
+        // 업로드할 디렉토리의 파일 목록
+        File[] filesToUpload = subDirectories[jobNumber - 1].listFiles();
+        if (filesToUpload == null) {
+            System.out.println("[Error]: error while file listing.");
+            return;
+        }
+        System.out.println();
+
+
+        String jdsName = null;
+        List<List<String>> downloadUrls = new ArrayList<>();
+
+        try {
+            for (File file : filesToUpload) {
+                if (jdsName == null && file.getName().endsWith(".jds"))
+                    jdsName = file.getName();
+
+                String url = S3FileUpload.uploadJobFiles(
+                    region,
+                    "s3-woochang-626635446593",
+                    file.getName(),
+                    file.getPath()
+                );
+
+                System.out.println("File uploaded successfully: " + file.getName());
+                //System.out.println("downloadUrl = " + url + "\n");
+                downloadUrls.add(List.of(file.getName(), url));
+            }
+
+        } catch (Exception e) {
+            System.out.println("[Error]: Error occurred while uploading job files! (T.T)");
+        }
+
+
+        // EC2 인스턴스에서 다운로드하도록 명령 전송
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        // 명령어 리스트
+        List<String> commands = new ArrayList<>(List.of(
+                "cd /home/ec2-user/program",
+                "DIR_NAME=\"Job" + String.format("%02d", jobNumber) +"_$(date +%Y%m%d_%H%M%S)\"",
+                "sudo -u ec2-user mkdir $DIR_NAME; cd $DIR_NAME"
+        ));
+
+        for (List<String> url : downloadUrls) {
+            commands.add(String.format("sudo -u ec2-user wget -O %s '%s'", url.get(0), url.get(1)));
+        }
+        commands.add("chmod a+x *.sh");
+        commands.add("[ -f setup.sh ] && ./setup.sh");
+        commands.add("sudo -u ec2-user condor_submit " + jdsName);
+
+        SendCommandRequest sendCommandRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap("commands", commands));
+
+        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
+
+        System.out.println("\nJob submitted successfully!!! (^-^)\n");
     }
 }
