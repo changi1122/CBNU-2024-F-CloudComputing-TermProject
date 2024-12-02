@@ -69,7 +69,7 @@ public class Main {
             System.out.println("  7.  reboot instance             8.  list images           ");
             System.out.println("  9.  shell command               10. submit jobs           ");
             System.out.println("  11. condor_status               12. condor_q              ");
-            System.out.println("                                  99. quit                  ");
+            System.out.println("  13. upload result to S3         99. quit                  ");
             System.out.println("------------------------------------------------------------");
 
             System.out.print("Enter an integer: ");
@@ -175,6 +175,18 @@ public class Main {
 
                     if (!instanceId.trim().isEmpty())
                         showCondorQ(instanceId.trim());
+                    break;
+
+                case 13:
+                    System.out.print("Enter instance id: ");
+                    if (idString.hasNext())
+                        instanceId = idString.nextLine();
+                    System.out.print("Enter S3 Bucket Name: ");
+                    if (idString.hasNext())
+                        bucketName = idString.nextLine();
+
+                    if (!instanceId.trim().isEmpty() && !bucketName.trim().isEmpty())
+                        uploadJobResults(instanceId, bucketName);
                     break;
 
                 case 99:
@@ -357,7 +369,12 @@ public class Main {
         }
     }
 
-    // EC2 인스턴스에서 셸 명령어를 실행하기 위한 메서드
+    /*
+     *  09번 메뉴 : EC2 인스턴스에서 셸 명령어를 실행
+     *  작동 방식 : AWS SDK의 SSM SendCommandRequest 기능을 이용해 스크립트 실행 비동기 요청 ->
+     *              2초마다 폴링 방식으로 확인 후 완료되면 결과 출력
+     *              (working directory의 경우 SDK 측에선 저장하지 않으므로 로컬 변수로 관리)
+     */
     public static void runShellCommand(String instanceId) throws InterruptedException {
         AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
                 .withCredentials(new ProfileCredentialsProvider())
@@ -393,95 +410,10 @@ public class Main {
         }
     }
 
-    // 로컬에서 working directory를 변경하기 처리하기 위한 메서드
-    private static String changeDirectory(String workingDirectory, String target) {
-        if (target.equals("~") || target.isEmpty()) { // 홈 디렉터리
-            return "/home/ec2-user";
-        }
-        else if (target.equals("..") && !workingDirectory.equals("/")) { // 상위 디렉터리
-            String wd = workingDirectory.substring(0, workingDirectory.lastIndexOf('/'));
-            if (wd.isEmpty())
-                wd = "/";
-            return wd;
-        }
-        else if (target.startsWith("/")) { // 절대 경로
-            return target;
-        }
-        else { // 상대 경로
-            return workingDirectory + "/" + target;
-        }
-    }
-    
-    // 로컬에서 working directory 출력시 홈 디렉터리를 ~로 출력하기 위한 메서드
-    private static String displayWorkingDirectory(String workingDirectory) {
-        return (workingDirectory.equals("/home/ec2-user") ? "~" : workingDirectory);
-    }
-
-    // condor_status를 출력하기 위한 메서드
-    public static void showCondorStatus(String instanceId) throws InterruptedException {
-        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
-                .withCredentials(new ProfileCredentialsProvider())
-                .withRegion(region)
-                .build();
-
-        SendCommandRequest sendCommandRequest = new SendCommandRequest()
-                .withInstanceIds(instanceId)
-                .withDocumentName("AWS-RunShellScript")
-                .withParameters(Collections.singletonMap(
-                        "commands",
-                        Collections.singletonList("condor_status"))
-                );
-
-        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
-    }
-
-    // condor_status를 출력하기 위한 메서드
-    public static void showCondorQ(String instanceId) throws InterruptedException {
-        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
-                .withCredentials(new ProfileCredentialsProvider())
-                .withRegion(region)
-                .build();
-
-        SendCommandRequest sendCommandRequest = new SendCommandRequest()
-                .withInstanceIds(instanceId)
-                .withDocumentName("AWS-RunShellScript")
-                .withParameters(Collections.singletonMap(
-                        "commands",
-                        Collections.singletonList("condor_q"))
-                );
-
-        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
-    }
-
-    // AWS SDK를 이용해 EC2 인스턴스로 명령어를 전송하고 결과를 출력하는 메서드
-    private static void sendShellCommandToInstance(String instanceId, AWSSimpleSystemsManagement ssmClient,
-                                                   SendCommandRequest sendCommandRequest) throws InterruptedException {
-        SendCommandResult result = ssmClient.sendCommand(sendCommandRequest);
-        String commandId = result.getCommand().getCommandId();
-
-        GetCommandInvocationRequest invocationRequest = new GetCommandInvocationRequest()
-                .withInstanceId(instanceId)
-                .withCommandId(commandId);
-
-        GetCommandInvocationResult invocationResult = null;
-        while (true) {
-            invocationResult = ssmClient.getCommandInvocation(invocationRequest);
-            String status = invocationResult.getStatus();
-
-            if ("Success".equals(status) || "Failed".equals(status) || "Cancelled".equals(status)) {
-                break;
-            }
-            Thread.sleep(2000);
-        }
-
-        // System.out.println("[Command Status]: " + invocationResult.getStatus());
-        System.out.println(invocationResult.getStandardOutputContent());
-
-        String serror = invocationResult.getStandardErrorContent();
-        if (!serror.isEmpty())
-            System.out.println("\n[Standard Error]:\n" + serror);
-    }
-
+    /*
+     *  10번 메뉴 : HTCondor 작업을 제출
+     *  작동 방식 : S3에 작업명세서와 스크립트 파일 업로드 -> EC2에서 다운로드 후 condor_submit으로 제출
+     */
     public static void submitJobs(String instanceId, String bucketName) throws InterruptedException {
 
         File jobDirectory = new File(jobDirectoryPath);
@@ -537,10 +469,10 @@ public class Main {
                     jdsName = file.getName();
 
                 String url = S3FileUpload.uploadJobFiles(
-                    region,
-                    "s3-woochang-626635446593",
-                    file.getName(),
-                    file.getPath()
+                        region,
+                        "s3-woochang-626635446593",
+                        file.getName(),
+                        file.getPath()
                 );
 
                 System.out.println("File uploaded successfully: " + file.getName());
@@ -581,5 +513,155 @@ public class Main {
         sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
 
         System.out.println("\nJob submitted successfully!!! (^-^)\n");
+    }
+
+    /*
+     *  11번 메뉴 : condor_status 결과 출력
+     *  작동 방식 : 09번 메뉴의 셸 명령어 실행 기능과 같은 방법으로, condor_status 실행
+     */
+    public static void showCondorStatus(String instanceId) throws InterruptedException {
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        SendCommandRequest sendCommandRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap(
+                        "commands",
+                        Collections.singletonList("condor_status"))
+                );
+
+        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
+    }
+
+    /*
+     *  12번 메뉴 : condor_q 결과 출력
+     *  작동 방식 : 09번 메뉴의 셸 명령어 실행 기능과 같은 방법으로, condor_q 실행
+     */
+    public static void showCondorQ(String instanceId) throws InterruptedException {
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        SendCommandRequest sendCommandRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap(
+                        "commands",
+                        Collections.singletonList("condor_q"))
+                );
+
+        sendShellCommandToInstance(instanceId, ssmClient, sendCommandRequest);
+    }
+
+    /*
+     *  13번 메뉴 : HTCondor 작업 실행 결과를 확인할 수 있도록 디렉터리를 S3 버킷에 업로드
+     *  작동 방식 : 업로드할 결과 디렉토리 선택 -> EC2 측에서 AWS CLI 명령어로 디렉토리의 파일을 S3 버킷에 업로드
+     */
+    public static void uploadJobResults(String instanceId, String bucketName) throws InterruptedException {
+        AWSSimpleSystemsManagement ssmClient = AWSSimpleSystemsManagementClientBuilder.standard()
+                .withCredentials(new ProfileCredentialsProvider())
+                .withRegion(region)
+                .build();
+
+        // 결과 디렉토리 목록 조회 명령어
+        SendCommandRequest listResultsRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap(
+                        "commands",
+                        Collections.singletonList(
+                                "echo \" \"; echo \"[Results]\";" +
+                                        "ls -l /home/ec2-user/program/ | grep '^d' | awk '{print $9}'"
+                        ))
+                );
+
+        // EC2에 명령
+        sendShellCommandToInstance(instanceId, ssmClient, listResultsRequest);
+
+        // 디렉토리 선택 입력 받음
+        String directoryName;
+        Scanner input = new Scanner(System.in);
+        System.out.print("\nEnter job result directory name: ");
+
+        directoryName = input.nextLine().trim();
+
+        if (directoryName.isEmpty() || directoryName.contains(" ")) {
+            System.out.println("[Error] job result directory name is not valid");
+            return;
+        }
+
+        // 결과 디렉토리를 S3 버킷에 업로드하기 위한 명령어
+        // result_upload.sh는 EC2 인스턴스에 미리 만들어 둠
+        List<String> commands = List.of(
+                "export RESULT_DIR=/home/ec2-user/program/"+directoryName,
+                "export BUCKET_NAME="+bucketName,
+                "export S3_DIR="+directoryName,
+                "sudo -E -u ec2-user /home/ec2-user/result_upload.sh"
+        );
+
+        SendCommandRequest uploadRequest = new SendCommandRequest()
+                .withInstanceIds(instanceId)
+                .withDocumentName("AWS-RunShellScript")
+                .withParameters(Collections.singletonMap("commands", commands));
+
+        // EC2에 S3 업로드 명령
+        sendShellCommandToInstance(instanceId, ssmClient, uploadRequest);
+    }
+
+    // AWS SDK를 이용해 EC2 인스턴스로 명령어를 전송하고 결과를 출력하는 메서드
+    private static void sendShellCommandToInstance(String instanceId, AWSSimpleSystemsManagement ssmClient,
+                                                   SendCommandRequest sendCommandRequest) throws InterruptedException {
+        SendCommandResult result = ssmClient.sendCommand(sendCommandRequest);
+        String commandId = result.getCommand().getCommandId();
+
+        GetCommandInvocationRequest invocationRequest = new GetCommandInvocationRequest()
+                .withInstanceId(instanceId)
+                .withCommandId(commandId);
+
+        GetCommandInvocationResult invocationResult = null;
+        while (true) {
+            invocationResult = ssmClient.getCommandInvocation(invocationRequest);
+            String status = invocationResult.getStatus();
+
+            if ("Success".equals(status) || "Failed".equals(status) || "Cancelled".equals(status)) {
+                break;
+            }
+            Thread.sleep(2000);
+        }
+
+        // System.out.println("[Command Status]: " + invocationResult.getStatus());
+        System.out.println(invocationResult.getStandardOutputContent());
+
+        String serror = invocationResult.getStandardErrorContent();
+        if (!serror.isEmpty())
+            System.out.println("\n[Standard Error]:\n" + serror);
+    }
+
+    // 로컬에서 working directory를 변경하기 처리하기 위한 메서드
+    private static String changeDirectory(String workingDirectory, String target) {
+        if (target.equals("~") || target.isEmpty()) { // 홈 디렉터리
+            return "/home/ec2-user";
+        }
+        else if (target.equals("..") && !workingDirectory.equals("/")) { // 상위 디렉터리
+            String wd = workingDirectory.substring(0, workingDirectory.lastIndexOf('/'));
+            if (wd.isEmpty())
+                wd = "/";
+            return wd;
+        }
+        else if (target.startsWith("/")) { // 절대 경로
+            return target;
+        }
+        else { // 상대 경로
+            return workingDirectory + "/" + target;
+        }
+    }
+
+    // 로컬에서 working directory 출력시 홈 디렉터리를 ~로 출력하기 위한 메서드
+    private static String displayWorkingDirectory(String workingDirectory) {
+        return (workingDirectory.equals("/home/ec2-user") ? "~" : workingDirectory);
     }
 }
