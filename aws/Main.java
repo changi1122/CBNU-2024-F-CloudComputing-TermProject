@@ -506,7 +506,7 @@ public class Main {
 
                 String url = S3FileUpload.uploadJobFiles(
                         region,
-                        "s3-woochang-626635446593",
+                        bucketName,
                         file.getName(),
                         file.getPath()
                 );
@@ -530,7 +530,7 @@ public class Main {
         // 명령어 리스트
         List<String> commands = new ArrayList<>(List.of(
                 "cd /home/ec2-user/program",
-                "DIR_NAME=\"Job" + String.format("%02d", jobNumber) +"_$(date +%Y%m%d_%H%M%S)\"",
+                "DIR_NAME=\"$(date +%Y%m%d_%H%M%S)_Job" + String.format("%02d", jobNumber) + "\"",
                 "sudo -u ec2-user mkdir $DIR_NAME; cd $DIR_NAME"
         ));
 
@@ -538,7 +538,7 @@ public class Main {
             commands.add(String.format("sudo -u ec2-user wget -O %s '%s'", url.get(0), url.get(1)));
         }
         commands.add("chmod a+x *.sh");
-        commands.add("[ -f setup.sh ] && ./setup.sh");
+        commands.add("[ -f setup.sh ] && sudo -u ec2-user ./setup.sh");
         commands.add("sudo -u ec2-user condor_submit " + jdsName);
 
         SendCommandRequest sendCommandRequest = new SendCommandRequest()

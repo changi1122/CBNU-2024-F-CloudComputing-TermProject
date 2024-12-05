@@ -23,11 +23,11 @@ public class S3FileUpload {
 
         // 파일 업로드 요청
         File file = new File(filePath);
-        s3Client.putObject(new PutObjectRequest(bucketName, keyName, file));
+        s3Client.putObject(new PutObjectRequest(bucketName, "jobs/" + keyName, file));
 
         System.out.println("File upload completed: " + keyName);
 
-        return generateDownloadUrl(s3Client, bucketName, keyName);
+        return generateDownloadUrl(s3Client, bucketName, "jobs/" + keyName);
     }
 
     // S3 버킷에 업로드된 파일에 대해 다운로드 링크를 생성하는 메서드
