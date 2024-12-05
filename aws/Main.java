@@ -71,6 +71,10 @@ public class Main {
             System.out.println("  11. condor_status               12. condor_q              ");
             System.out.println("  13. upload result to S3         99. quit                  ");
             System.out.println("------------------------------------------------------------");
+            System.out.println(" [Name]        [Instance ID]");
+            for (Map.Entry<String, String> entry : IdNameHolder.listInstances().entrySet())
+                System.out.printf(" %-14s %s\n", entry.getKey(), entry.getValue());
+            System.out.println("------------------------------------------------------------");
 
             System.out.print("Enter an integer: ");
 
@@ -99,7 +103,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        startInstance(instanceId.trim());
+                        startInstance(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 4:
@@ -112,7 +116,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        stopInstance(instanceId.trim());
+                        stopInstance(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 6:
@@ -131,7 +135,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        rebootInstance(instanceId.trim());
+                        rebootInstance(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 8:
@@ -144,7 +148,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        runShellCommand(instanceId.trim());
+                        runShellCommand(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 10:
@@ -156,7 +160,10 @@ public class Main {
                         bucketName = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty() && !bucketName.trim().isEmpty())
-                        submitJobs(instanceId, bucketName);
+                        submitJobs(
+                                IdNameHolder.convertNameToIdIfExists(instanceId.trim()),
+                                bucketName
+                        );
                     break;
 
                 case 11:
@@ -165,7 +172,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        showCondorStatus(instanceId.trim());
+                        showCondorStatus(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 12:
@@ -174,7 +181,7 @@ public class Main {
                         instanceId = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty())
-                        showCondorQ(instanceId.trim());
+                        showCondorQ(IdNameHolder.convertNameToIdIfExists(instanceId.trim()));
                     break;
 
                 case 13:
@@ -186,7 +193,10 @@ public class Main {
                         bucketName = idString.nextLine();
 
                     if (!instanceId.trim().isEmpty() && !bucketName.trim().isEmpty())
-                        uploadJobResults(instanceId, bucketName);
+                        uploadJobResults(
+                                IdNameHolder.convertNameToIdIfExists(instanceId.trim()),
+                                bucketName
+                        );
                     break;
 
                 case 99:
@@ -202,6 +212,8 @@ public class Main {
 
     public static void listInstances() {
         System.out.println("Listing instances...");
+
+        IdNameHolder.clear();
         boolean done = false;
 
         DescribeInstancesRequest request = new DescribeInstancesRequest();
@@ -211,17 +223,28 @@ public class Main {
 
             for (Reservation reservation : response.getReservations()) {
                 for (Instance instance : reservation.getInstances()) {
+                    String instanceName = "";
+
+                    for (Tag tag : instance.getTags()) {
+                        if ("Name".equals(tag.getKey())) {
+                            instanceName = tag.getValue();
+                        }
+                    }
+
+                    // 메뉴에서 ID Name 표시용
+                    IdNameHolder.addInstance(instanceName, instance.getInstanceId());
+
                     System.out.printf(
+                            "[name] %8s, " +
                             "[id] %s, " +
                             "[AMI] %s, " +
                             "[type] %s, " +
-                            "[state] %10s, " +
-                            "[monitoring state] %s",
+                            "[state] %10s, ",
+                            instanceName,
                             instance.getInstanceId(),
                             instance.getImageId(),
                             instance.getInstanceType(),
-                            instance.getState().getName(),
-                            instance.getMonitoring().getState());
+                            instance.getState().getName());
                 }
                 System.out.println();
             }
@@ -325,12 +348,25 @@ public class Main {
                 .withMinCount(1);
 
         RunInstancesResult runResult = ec2Temp.runInstances(runRequest);
+        String instanceId = runResult.getReservation().getInstances().get(0).getInstanceId();
 
-        String reservationId = runResult.getReservation().getInstances().get(0).getInstanceId();
+        // Name 태그 추가
+        String tagValue = "Slave#" + IdNameHolder.size();
+        Tag nameTag = new Tag()
+                .withKey("Name")
+                .withValue(tagValue);
+
+        CreateTagsRequest tagRequest = new CreateTagsRequest()
+                .withResources(instanceId)
+                .withTags(nameTag);
+
+        ec2.createTags(tagRequest);
+
+        IdNameHolder.addInstance(tagValue, instanceId);
 
         System.out.printf(
                 "Successfully started EC2 instance %s based on AMI %s",
-                reservationId, amiId
+                instanceId, amiId
         );
     }
 
