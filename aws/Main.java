@@ -341,11 +341,18 @@ public class Main {
     public static void createInstance(String amiId) {
         final AmazonEC2 ec2Temp = AmazonEC2ClientBuilder.defaultClient();
 
+        // IAM 역할 설정
+        IamInstanceProfileSpecification iamProfile = new IamInstanceProfileSpecification()
+                .withName("term-project-ssm-role");
+
         RunInstancesRequest runRequest = new RunInstancesRequest()
                 .withImageId(amiId)
                 .withInstanceType(InstanceType.T2Micro)
                 .withMaxCount(1)
-                .withMinCount(1);
+                .withMinCount(1)
+                .withIamInstanceProfile(iamProfile)
+                .withKeyName("termproject-key")
+                .withSecurityGroups("HTCondor");
 
         RunInstancesResult runResult = ec2Temp.runInstances(runRequest);
         String instanceId = runResult.getReservation().getInstances().get(0).getInstanceId();
